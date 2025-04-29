@@ -224,7 +224,7 @@ else:
     avg_rmse = np.sqrt(mean_squared_error(true_prices, pred_prices))
     within_15 = np.mean(np.abs(pred_prices - true_prices) / np.abs(true_prices) <= 0.15)
 
-    st.subheader(f"\ud83d\udcc8 Forecast Accuracy for {generator}")
+    st.subheader(f"Forecast Accuracy for {generator}")
     col1, col2, col3 = st.columns(3)
     col1.metric("Average R²", f"{avg_r2:.3f}")
     col2.metric("Average RMSE", f"{avg_rmse:.2f}")
@@ -242,7 +242,7 @@ else:
     # === Download buttons
     excel_single = convert_single_prediction_to_excel(y_pred, y_true, start_time, generator)
     st.download_button(
-        label="⬇️ Download Current Generator Predictions (Actual vs Predicted)",
+        label="Download Current Generator Predictions (Actual vs Predicted)",
         data=excel_single,
         file_name=f"{generator}_forecast.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -250,7 +250,7 @@ else:
 
     excel_all = convert_all_predictions_to_excel(all_preds, Y, resource_names, timestamps)
     st.download_button(
-        label="⬇️ Download All Generators (Actual vs Predicted, All Tabs + Combined)",
+        label="Download All Generators (Actual vs Predicted, All Tabs + Combined)",
         data=excel_all,
         file_name="all_forecasts.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
