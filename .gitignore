@@ -1,0 +1,14 @@
+# Ignore raw training data CSVs (large files only)
+Model_Info/SCED_*.csv
+
+# Ignore Jupyter notebooks (optional)
+*.ipynb
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VSCode settings (optional)
+.vscode/
