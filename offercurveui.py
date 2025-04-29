@@ -27,7 +27,7 @@ generator = st.selectbox("Choose Generator:", unique_generators)
 
 # === View mode toggle
 view_mode = st.radio(
-    "\ud83d\udcca Select Display Mode:",
+    "Select Display Mode:",
     ["Scrollable (1 row, wide plots)", "Grid (4x6 layout, all visible)"],
     index=0
 )
