@@ -1,0 +1,8 @@
+streamlit
+pyngrok
+tensorflow
+scikit-learn
+numpy
+pandas
+matplotlib
+xlsxwriter
