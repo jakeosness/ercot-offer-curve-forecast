@@ -1,61 +1,60 @@
-# ✅ STEP 1: Import libraries
-print("[INFO] Step 1: Importing libraries...")
+# train_model_full_year.py
+
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import os
+from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Dropout, LayerNormalization, MultiHeadAttention, Add, GlobalAveragePooling1D
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-import os
-from tqdm import tqdm
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
-# ✅ STEP 2: Load data
-print("[INFO] Step 2: Loading data...")
-input_path = "./Model_Info/SCED_FullYear_2024.csv"
-df = pd.read_csv(input_path)
+# === STEP 1: Load full-year 2024 data ===
+print("[INFO] Step 1: Loading full-year 2024 data...")
+df = pd.read_csv("./Model_Info/SCED_FullYear_2024.csv")
 df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['SCED Time Stamp'])
 df = df.sort_values('Datetime').reset_index(drop=True)
 
-# ✅ STEP 3: Feature Engineering
-print("[INFO] Step 3: Engineering features...")
-df = df.drop(columns=['Submitted TPO-MW9', 'Submitted TPO-MW10', 'Submitted TPO-Price9', 'Submitted TPO-Price10'])
+# === STEP 2: Feature engineering ===
+print("[INFO] Step 2: Feature engineering...")
+# Drop columns with high nulls
+cols_to_drop = ['Submitted TPO-MW9', 'Submitted TPO-MW10', 'Submitted TPO-Price9', 'Submitted TPO-Price10']
+df = df.drop(columns=cols_to_drop)
+
+# Time-based features
 df['Hour'] = df['Datetime'].dt.hour
 df['DayOfWeek'] = df['Datetime'].dt.dayofweek
 df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
 
+# Rolling features
 for col in ['Submitted TPO-Price8', 'Submitted TPO-MW8']:
     df[f'{col}_ma3'] = df[col].rolling(window=3, min_periods=1).mean()
     df[f'{col}_diff1'] = df[col].diff().fillna(0)
 
+# Define targets (MW1–MW8, Price1–Price8)
 mw_cols = [f'Submitted TPO-MW{i}' for i in range(1, 9)]
 price_cols = [f'Submitted TPO-Price{i}' for i in range(1, 9)]
 target_cols = mw_cols + price_cols
+
+# Define features
 exclude_cols = ['Date', 'SCED Time Stamp', 'Datetime', 'Resource Name'] + target_cols
 feature_cols = [col for col in df.columns if col not in exclude_cols and df[col].dtype != 'object']
 df[feature_cols] = df[feature_cols].apply(pd.to_numeric, errors='coerce')
 df = df.dropna(subset=feature_cols + target_cols)
 
-# ✅ SAVE CLEANED DATA SNAPSHOT
-print("[INFO] Saving cleaned dataframe snapshot...")
+print("[INFO] Saving cleaned snapshot...")
 df.to_csv("./Model_Info/df_sample.csv", index=False)
 
-# ✅ STEP 4: Time-based Split
-print("[INFO] Step 4: Splitting data by time...")
-cutoff = pd.to_datetime("2024-10-01")
-df_train = df[df['Datetime'] < cutoff]
-df_test = df[df['Datetime'] >= cutoff]
-
-# ✅ STEP 5: Sequence Creation to Disk
-print("[INFO] Step 5: Creating sequences (saving to disk)...")
+# === STEP 3: Sequence creation across entire 2024 ===
+print("[INFO] Step 3: Creating sequences for full-year training...")
 output_dir = "./Model_Info/sequences"
 os.makedirs(output_dir, exist_ok=True)
 
-all_test_timestamps = []
+input_hours = 2016
+forecast_hours = 72
 
-def create_XY(df, feature_cols, mw_cols, price_cols, input_hours=2016, forecast_hours=72):
+def create_XY(df, feature_cols, mw_cols, price_cols, input_hours, forecast_hours):
     X, Y, timestamps = [], [], []
     for i in range(len(df) - input_hours - forecast_hours):
         x_block = df.iloc[i:i+input_hours][feature_cols].values
@@ -69,21 +68,14 @@ def create_XY(df, feature_cols, mw_cols, price_cols, input_hours=2016, forecast_
         timestamps.append(df.iloc[i + input_hours]['Datetime'])
     return np.array(X), np.array(Y), timestamps
 
+num_saved = 0
 for gen_name, group in tqdm(df.groupby("Resource Name"), desc="Generators"):
     group = group.sort_values("Datetime")
-    train = group[group['Datetime'] < cutoff]
-    test = group[group['Datetime'] >= cutoff]
+    if len(group) >= input_hours + forecast_hours:
+        X, Y, timestamps = create_XY(group, feature_cols, mw_cols, price_cols, input_hours, forecast_hours)
+        np.save(f"{output_dir}/{gen_name}_X_train.npy", X)
+        np.save(f"{output_dir}/{gen_name}_Y_train.npy", Y)
+        np.save(f"{output_dir}/{gen_name}_timestamps_train.npy", np.array(timestamps))
+        num_saved += 1
 
-    if len(train) >= 2016 + 72:
-        X_train, Y_train, _ = create_XY(train, feature_cols, mw_cols, price_cols)
-        np.save(f"{output_dir}/{gen_name}_X_train.npy", X_train)
-        np.save(f"{output_dir}/{gen_name}_Y_train.npy", Y_train)
-
-    if len(test) >= 2016 + 72:
-        X_test, Y_test, ts = create_XY(test, feature_cols, mw_cols, price_cols)
-        np.save(f"{output_dir}/{gen_name}_X_test.npy", X_test)
-        np.save(f"{output_dir}/{gen_name}_Y_test.npy", Y_test)
-        np.save(f"{output_dir}/{gen_name}_timestamps_test.npy", np.array(ts))
-        all_test_timestamps.extend(ts)
-
-print("[INFO] ✅ Sequence creation complete. Files written to disk.")
+print(f"[INFO] ✅ Sequence creation complete. {num_saved} generators saved to disk.")
