@@ -11,7 +11,12 @@ import streamlit.components.v1 as components
 import matplotlib.gridspec as gridspec
 
 # === Load Data
-X = np.load("./Model_Info/X_sample.npy")
+X_parts = [
+    np.load("./Model_Info/X_sample_part1.npy"),
+    np.load("./Model_Info/X_sample_part2.npy"),
+    np.load("./Model_Info/X_sample_part3.npy"),
+]
+X = np.concatenate(X_parts, axis=0)
 Y = np.load("./Model_Info/Y_sample.npy")
 all_preds = np.load("./Model_Info/predictions.npy")
 timestamps = np.load("./Model_Info/timestamps.npy", allow_pickle=True)
