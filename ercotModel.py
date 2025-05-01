@@ -1,89 +1,42 @@
-# ✅ STEP 1: Import libraries
-print("[INFO] Step 1: Importing libraries...")
-import pandas as pd
+# ercotModel.py — Shared Transformer model with regularization
+
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, Dropout, LayerNormalization, MultiHeadAttention, Add, GlobalAveragePooling1D
+from tensorflow.keras.layers import (
+    Input, Dense, Dropout, LayerNormalization, MultiHeadAttention, Add,
+    GlobalAveragePooling1D, Embedding, RepeatVector, Concatenate
+)
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-import os
-from tqdm import tqdm
+from tensorflow.keras.regularizers import l2
 
-# ✅ STEP 2: Load data
-print("[INFO] Step 2: Loading data...")
-input_path = "./Model_Info/SCED_FullYear_2024.csv"
-df = pd.read_csv(input_path)
-df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['SCED Time Stamp'])
-df = df.sort_values('Datetime').reset_index(drop=True)
+def build_model(input_shape, output_dim, num_generators, embedding_dim=16):
+    """
+    Build a Transformer model with generator ID embedding and regularization.
+    """
+    # Inputs
+    input_seq = Input(shape=input_shape, name="time_series_input")
+    gen_id_input = Input(shape=(), dtype='int32', name="generator_id")
 
-# ✅ STEP 3: Feature Engineering
-print("[INFO] Step 3: Engineering features...")
-df = df.drop(columns=['Submitted TPO-MW9', 'Submitted TPO-MW10', 'Submitted TPO-Price9', 'Submitted TPO-Price10'])
-df['Hour'] = df['Datetime'].dt.hour
-df['DayOfWeek'] = df['Datetime'].dt.dayofweek
-df['IsWeekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
+    # Generator embedding
+    gen_embedding = Embedding(input_dim=num_generators, output_dim=embedding_dim)(gen_id_input)
+    gen_embedding = RepeatVector(input_shape[0])(gen_embedding)
 
-for col in ['Submitted TPO-Price8', 'Submitted TPO-MW8']:
-    df[f'{col}_ma3'] = df[col].rolling(window=3, min_periods=1).mean()
-    df[f'{col}_diff1'] = df[col].diff().fillna(0)
+    # Concatenate with input sequence
+    x = Concatenate()([input_seq, gen_embedding])
 
-mw_cols = [f'Submitted TPO-MW{i}' for i in range(1, 9)]
-price_cols = [f'Submitted TPO-Price{i}' for i in range(1, 9)]
-target_cols = mw_cols + price_cols
-exclude_cols = ['Date', 'SCED Time Stamp', 'Datetime', 'Resource Name'] + target_cols
-feature_cols = [col for col in df.columns if col not in exclude_cols and df[col].dtype != 'object']
-df[feature_cols] = df[feature_cols].apply(pd.to_numeric, errors='coerce')
-df = df.dropna(subset=feature_cols + target_cols)
+    # Transformer block
+    x_norm = LayerNormalization()(x)
+    attn_output = MultiHeadAttention(num_heads=4, key_dim=32)(x_norm, x_norm)
+    x = Add()([x, attn_output])
+    x = LayerNormalization()(x)
+    x = GlobalAveragePooling1D()(x)
+    x = Dense(128, activation='relu', kernel_regularizer=l2(1e-4))(x)
+    x = Dropout(0.4)(x)
+    outputs = Dense(output_dim)(x)
 
-# ✅ SAVE CLEANED DATA SNAPSHOT
-print("[INFO] Saving cleaned dataframe snapshot...")
-df.to_csv("./Model_Info/df_sample.csv", index=False)
+    model = Model(inputs=[input_seq, gen_id_input], outputs=outputs)
+    model.compile(optimizer=Adam(1e-4), loss='mse', metrics=['mae'])
+    return model
 
-# ✅ STEP 4: Time-based Split
-print("[INFO] Step 4: Splitting data by time...")
-cutoff = pd.to_datetime("2024-10-01")
-df_train = df[df['Datetime'] < cutoff]
-df_test = df[df['Datetime'] >= cutoff]
-
-# ✅ STEP 5: Sequence Creation to Disk
-print("[INFO] Step 5: Creating sequences (saving to disk)...")
-output_dir = "./Model_Info/sequences"
-os.makedirs(output_dir, exist_ok=True)
-
-all_test_timestamps = []
-
-def create_XY(df, feature_cols, mw_cols, price_cols, input_hours=2016, forecast_hours=72):
-    X, Y, timestamps = [], [], []
-    for i in range(len(df) - input_hours - forecast_hours):
-        x_block = df.iloc[i:i+input_hours][feature_cols].values
-        y_block = []
-        for j in range(forecast_hours):
-            row = df.iloc[i + input_hours + j]
-            y_block.extend(row[mw_cols])
-            y_block.extend(row[price_cols])
-        X.append(x_block)
-        Y.append(y_block)
-        timestamps.append(df.iloc[i + input_hours]['Datetime'])
-    return np.array(X), np.array(Y), timestamps
-
-for gen_name, group in tqdm(df.groupby("Resource Name"), desc="Generators"):
-    group = group.sort_values("Datetime")
-    train = group[group['Datetime'] < cutoff]
-    test = group[group['Datetime'] >= cutoff]
-
-    if len(train) >= 2016 + 72:
-        X_train, Y_train, _ = create_XY(train, feature_cols, mw_cols, price_cols)
-        np.save(f"{output_dir}/{gen_name}_X_train.npy", X_train)
-        np.save(f"{output_dir}/{gen_name}_Y_train.npy", Y_train)
-
-    if len(test) >= 2016 + 72:
-        X_test, Y_test, ts = create_XY(test, feature_cols, mw_cols, price_cols)
-        np.save(f"{output_dir}/{gen_name}_X_test.npy", X_test)
-        np.save(f"{output_dir}/{gen_name}_Y_test.npy", Y_test)
-        np.save(f"{output_dir}/{gen_name}_timestamps_test.npy", np.array(ts))
-        all_test_timestamps.extend(ts)
-
-print("[INFO] ✅ Sequence creation complete. Files written to disk.")
+def make_predictions(model, X, generator_ids):
+    return model.predict([X, generator_ids], verbose=0)
